@@ -84,6 +84,28 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(disposable, runByName, terminalCloseListener);
+
+  // terminalTabs 커맨드를 commandsToSkipShell에 자동 등록
+  registerCommandsToSkipShell();
+}
+
+function registerCommandsToSkipShell(): void {
+  const COMMANDS_TO_SKIP = [
+    'terminalTabs.runCommand',
+    'terminalTabs.runCommandByName',
+  ];
+
+  const config = vscode.workspace.getConfiguration('terminal.integrated');
+  const current: string[] = config.get('commandsToSkipShell', []);
+
+  const missing = COMMANDS_TO_SKIP.filter((cmd) => !current.includes(cmd));
+  if (missing.length > 0) {
+    config.update(
+      'commandsToSkipShell',
+      [...current, ...missing],
+      vscode.ConfigurationTarget.Global
+    );
+  }
 }
 
 export function deactivate() {
