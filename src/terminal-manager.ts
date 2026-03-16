@@ -77,6 +77,23 @@ export class TerminalManager {
     return null;
   }
 
+  /**
+   * 이름이 일치하는 관리 중인 터미널이 있으면 포커스 이동.
+   * 없으면 false 반환.
+   */
+  focusTerminalByName(name: string): boolean {
+    this.cleanupDeadTerminals();
+
+    const markedName = name + MARKER;
+    for (const terminal of this.managedTerminals) {
+      if (terminal.name === markedName) {
+        terminal.show();
+        return true;
+      }
+    }
+    return false;
+  }
+
   private cleanupDeadTerminals(): void {
     const allTerminals = vscode.window.terminals;
     for (const managed of this.managedTerminals) {

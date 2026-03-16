@@ -73,7 +73,10 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      await terminalManager.runCommand(found);
+      // 이미 열린 터미널이 있으면 포커스 이동, 없으면 새로 생성
+      if (!terminalManager.focusTerminalByName(found.name)) {
+        await terminalManager.runCommand(found);
+      }
     }
   );
 
