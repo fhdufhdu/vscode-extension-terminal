@@ -1,0 +1,75 @@
+{
+  "name": "terminal-tabs",
+  "displayName": "Terminal Tabs",
+  "description": "에디터 탭 우측 상단에서 터미널 명령어를 실행하는 확장",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "terminalTabs.runCommand",
+        "title": "Terminal Tabs: Run Command",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "terminalTabs.runCommandByName",
+        "title": "Terminal Tabs: Run Command By Name"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "terminalTabs.runCommand",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Terminal Tabs",
+      "properties": {
+        "terminalTabs.commands": {
+          "type": "array",
+          "markdownDescription": "터미널 탭에서 실행할 명령어 목록. 각 항목에 `name`, `command`, `icon`(선택)을 설정합니다.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "터미널 탭에 표시될 이름"
+              },
+              "icon": {
+                "type": "string",
+                "markdownDescription": "아이콘. codicon 이름(예: `play`), 내장 아이콘(`claude`, `gemini`, `codex`), 또는 이미지 파일 경로(예: `./icons/my.svg`)"
+              },
+              "command": {
+                "type": "string",
+                "description": "실행할 터미널 명령어"
+              }
+            },
+            "required": ["name", "command"],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "lint": "eslint src",
+    "install-ext": "bash install.sh"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  }
+}
