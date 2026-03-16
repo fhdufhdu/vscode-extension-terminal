@@ -1,5 +1,6 @@
 .vscode/**
 src/**
-node_modules/**
 tsconfig.json
 esbuild.js
+node_modules/*
+!node_modules/node-pty
