@@ -1,16 +1,11 @@
 import * as vscode from 'vscode';
-import { TerminalManager } from './terminal-manager';
-
-interface CommandConfig {
-  name: string;
-  icon?: string;
-  command: string;
-}
+import { TerminalManager, CommandConfig } from './terminal-manager';
 
 let terminalManager: TerminalManager;
 
 export function activate(context: vscode.ExtensionContext) {
   terminalManager = new TerminalManager(context);
+  terminalManager.cleanupEmptyGroups().catch(() => {});
 
   const disposable = vscode.commands.registerCommand(
     'terminalTabs.runCommand',
