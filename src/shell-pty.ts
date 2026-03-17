@@ -2,18 +2,24 @@ import * as vscode from 'vscode';
 import * as pty from 'node-pty';
 import * as os from 'os';
 
+const IS_WINDOWS = os.platform() === 'win32';
+const PTY_EXIT_DELAY_MS = 100;
+
 export class ShellPseudoterminal implements vscode.Pseudoterminal {
   private ptyProcess: pty.IPty | undefined;
   private writeEmitter = new vscode.EventEmitter<string>();
   private closeEmitter = new vscode.EventEmitter<void>();
-  private dataBuffer: string[] = [];
-  private ready = false;
   private disposed = false;
 
   onDidWrite = this.writeEmitter.event;
   onDidClose = this.closeEmitter.event;
 
-  constructor(private command: string) {}
+  private commandDelayMs: number;
+
+  constructor(private command: string) {
+    const config = vscode.workspace.getConfiguration('terminalTabs');
+    this.commandDelayMs = config.get<number>('commandDelayMs', 0);
+  }
 
   open(initialDimensions: vscode.TerminalDimensions | undefined): void {
     const shell = this.getDefaultShell();
@@ -21,13 +27,14 @@ export class ShellPseudoterminal implements vscode.Pseudoterminal {
     const rows = initialDimensions?.rows ?? 24;
 
     try {
-      const env = {
-        ...process.env,
-        COLORTERM: 'truecolor',
-        TERM_PROGRAM: 'vscode',
-      } as { [key: string]: string };
+      const env: Record<string, string> = {};
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value !== undefined) env[key] = value;
+      }
+      env.COLORTERM = 'truecolor';
+      env.TERM_PROGRAM = 'vscode';
 
-      this.ptyProcess = pty.spawn(shell, ['--login'], {
+      this.ptyProcess = pty.spawn(shell, this.getShellArgs(), {
         name: 'xterm-256color',
         cols,
         rows,
@@ -37,38 +44,26 @@ export class ShellPseudoterminal implements vscode.Pseudoterminal {
 
       this.ptyProcess.onData((data) => {
         if (this.disposed) { return; }
-        if (this.ready) {
-          this.writeEmitter.fire(data);
-        } else {
-          this.dataBuffer.push(data);
-        }
+        this.writeEmitter.fire(data);
       });
 
       this.ptyProcess.onExit(() => {
-        // xterm.js dispose 타이밍과 충돌하지 않도록 지연
+        // xterm.js가 비동기로 dimensions를 접근하므로 즉시 닫으면 에러 발생
         setTimeout(() => {
           if (!this.disposed) {
             this.closeEmitter.fire();
           }
-        }, 100);
+        }, PTY_EXIT_DELAY_MS);
       });
 
-      // xterm.js 초기화 대기 후 버퍼 플러시 및 명령어 전달
       setTimeout(() => {
-        this.ready = true;
-        for (const data of this.dataBuffer) {
-          this.writeEmitter.fire(data);
-        }
-        this.dataBuffer = [];
-
         if (this.command.trim() && this.ptyProcess) {
-          this.ptyProcess.write(this.command + '\n');
+          this.ptyProcess.write(this.command + this.getEOL());
         }
-      }, 500);
+      }, this.commandDelayMs);
     } catch (e) {
-      setTimeout(() => {
-        this.writeEmitter.fire(`Failed to start shell: ${e}\r\n`);
-      }, 500);
+      this.closeEmitter.fire();
+      vscode.window.showErrorMessage(`Terminal Tabs: 쉘 시작 실패 - ${e}`);
     }
   }
 
@@ -94,9 +89,18 @@ export class ShellPseudoterminal implements vscode.Pseudoterminal {
   }
 
   private getDefaultShell(): string {
-    if (os.platform() === 'win32') {
+    if (IS_WINDOWS) {
       return process.env.COMSPEC || 'cmd.exe';
     }
     return process.env.SHELL || '/bin/bash';
+  }
+
+  private getShellArgs(): string[] {
+    if (IS_WINDOWS) return [];
+    return ['--login'];
+  }
+
+  private getEOL(): string {
+    return IS_WINDOWS ? '\r\n' : '\n';
   }
 }
