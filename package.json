@@ -7,7 +7,7 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "activationEvents": [],
+  "activationEvents": ["onStartupFinished"],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -29,6 +29,28 @@
         }
       ]
     },
+    "keybindings": [
+      {
+        "command": "terminalTabs.runCommandByName",
+        "key": "ctrl+shift+1",
+        "args": { "name": "Claude Code" }
+      },
+      {
+        "command": "terminalTabs.runCommandByName",
+        "key": "ctrl+shift+2",
+        "args": { "name": "Gemini" }
+      },
+      {
+        "command": "terminalTabs.runCommandByName",
+        "key": "ctrl+shift+3",
+        "args": { "name": "Codex" }
+      },
+      {
+        "command": "terminalTabs.runCommandByName",
+        "key": "ctrl+shift+4",
+        "args": { "name": "Terminal" }
+      }
+    ],
     "configuration": {
       "title": "Terminal Tabs",
       "properties": {
@@ -54,7 +76,34 @@
             "required": ["name", "command"],
             "additionalProperties": false
           },
-          "default": []
+          "default": [
+            {
+              "name": "Claude Code",
+              "command": "claude",
+              "icon": "claude"
+            },
+            {
+              "name": "Gemini",
+              "command": "gemini",
+              "icon": "gemini"
+            },
+            {
+              "name": "Codex",
+              "command": "cxh --search",
+              "icon": "codex"
+            },
+            {
+              "name": "Terminal",
+              "command": "",
+              "icon": "terminal"
+            }
+          ]
+        },
+        "terminalTabs.commandDelayMs": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "터미널 생성 후 명령어 전달까지의 지연 시간(ms). 쉘 초기화(.zshrc 등)가 느린 환경에서 명령어가 씹히면 값을 올려주세요. 0이면 즉시 전달합니다."
         }
       }
     }
