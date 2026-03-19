@@ -4,12 +4,18 @@ import * as os from 'os';
 
 const IS_WINDOWS = os.platform() === 'win32';
 const PTY_EXIT_DELAY_MS = 100;
+const HIGH_WATER_MARK = 10 * 1024; // 10KB — 이 이상 쌓이면 pty 일시정지
+const LOW_WATER_MARK = 1024;       // 1KB — 이 이하로 내려가면 pty 재개
 
 export class ShellPseudoterminal implements vscode.Pseudoterminal {
   private ptyProcess: pty.IPty | undefined;
   private writeEmitter = new vscode.EventEmitter<string>();
   private closeEmitter = new vscode.EventEmitter<void>();
   private disposed = false;
+  private writeQueue: string[] = [];
+  private queueSize = 0;
+  private draining = false;
+  private paused = false;
 
   onDidWrite = this.writeEmitter.event;
   onDidClose = this.closeEmitter.event;
@@ -44,7 +50,7 @@ export class ShellPseudoterminal implements vscode.Pseudoterminal {
 
       this.ptyProcess.onData((data) => {
         if (this.disposed) { return; }
-        this.writeEmitter.fire(data);
+        this.enqueueWrite(data);
       });
 
       this.ptyProcess.onExit(() => {
@@ -65,6 +71,47 @@ export class ShellPseudoterminal implements vscode.Pseudoterminal {
       this.closeEmitter.fire();
       vscode.window.showErrorMessage(`Terminal Tabs: 쉘 시작 실패 - ${e}`);
     }
+  }
+
+  private enqueueWrite(data: string): void {
+    this.writeQueue.push(data);
+    this.queueSize += data.length;
+
+    if (!this.paused && this.queueSize > HIGH_WATER_MARK) {
+      this.paused = true;
+      this.ptyProcess?.pause();
+    }
+
+    this.drainQueue();
+  }
+
+  private drainQueue(): void {
+    if (this.draining) { return; }
+    this.draining = true;
+
+    const step = () => {
+      if (this.disposed || this.writeQueue.length === 0) {
+        this.draining = false;
+        return;
+      }
+
+      const chunk = this.writeQueue.shift()!;
+      this.queueSize -= chunk.length;
+      this.writeEmitter.fire(chunk);
+
+      if (this.paused && this.queueSize <= LOW_WATER_MARK) {
+        this.paused = false;
+        this.ptyProcess?.resume();
+      }
+
+      if (this.writeQueue.length > 0) {
+        setTimeout(step, 0);
+      } else {
+        this.draining = false;
+      }
+    };
+
+    step();
   }
 
   handleInput(data: string): void {
