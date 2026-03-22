@@ -1,153 +1,139 @@
 import * as vscode from 'vscode';
-import * as pty from 'node-pty';
 import * as os from 'os';
+import * as path from 'path';
+import { spawn, ChildProcess } from 'child_process';
+import * as readline from 'readline';
 
-const IS_WINDOWS = os.platform() === 'win32';
 const PTY_EXIT_DELAY_MS = 100;
-const HIGH_WATER_MARK = 10 * 1024; // 10KB — 이 이상 쌓이면 pty 일시정지
-const LOW_WATER_MARK = 1024;       // 1KB — 이 이하로 내려가면 pty 재개
+
+interface BridgeMessage {
+  type: 'output' | 'exit';
+  data?: string;
+  code?: number;
+}
 
 export class ShellPseudoterminal implements vscode.Pseudoterminal {
-  private ptyProcess: pty.IPty | undefined;
+  private bridgeProcess: ChildProcess | undefined;
   private writeEmitter = new vscode.EventEmitter<string>();
   private closeEmitter = new vscode.EventEmitter<void>();
   private disposed = false;
-  private writeQueue: string[] = [];
-  private queueSize = 0;
-  private draining = false;
-  private paused = false;
 
   onDidWrite = this.writeEmitter.event;
   onDidClose = this.closeEmitter.event;
 
   private commandDelayMs: number;
 
-  constructor(private command: string) {
+  constructor(private command: string, private extensionPath: string) {
     const config = vscode.workspace.getConfiguration('terminalTabs');
     this.commandDelayMs = config.get<number>('commandDelayMs', 0);
   }
 
   open(initialDimensions: vscode.TerminalDimensions | undefined): void {
-    const shell = this.getDefaultShell();
     const cols = initialDimensions?.columns ?? 80;
     const rows = initialDimensions?.rows ?? 24;
 
     try {
-      const env: Record<string, string> = {};
-      for (const [key, value] of Object.entries(process.env)) {
-        if (value !== undefined) env[key] = value;
-      }
-      env.COLORTERM = 'truecolor';
-      env.TERM_PROGRAM = 'vscode';
+      const bridgeBinary = this.getBridgeBinaryName();
+      const bridgePath = path.join(this.extensionPath, 'bin', bridgeBinary);
 
-      this.ptyProcess = pty.spawn(shell, this.getShellArgs(), {
-        name: 'xterm-256color',
-        cols,
-        rows,
+      // Go 브릿지 실행
+      this.bridgeProcess = spawn(bridgePath, [], {
         cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
-        env,
+        env: { ...process.env, COLORTERM: 'truecolor', TERM_PROGRAM: 'vscode' }
       });
 
-      this.ptyProcess.onData((data) => {
-        if (this.disposed) { return; }
-        this.enqueueWrite(data);
-      });
+      // 브릿지로부터의 출력을 처리 (JSON 한 줄 단위)
+      if (this.bridgeProcess.stdout) {
+        const rl = readline.createInterface({
+          input: this.bridgeProcess.stdout,
+          terminal: false
+        });
 
-      this.ptyProcess.onExit(() => {
-        // xterm.js가 비동기로 dimensions를 접근하므로 즉시 닫으면 에러 발생
-        setTimeout(() => {
-          if (!this.disposed) {
-            this.closeEmitter.fire();
+        rl.on('line', (line) => {
+          if (this.disposed) return;
+          try {
+            const msg: BridgeMessage = JSON.parse(line);
+            if (msg.type === 'output' && msg.data) {
+              this.writeEmitter.fire(msg.data);
+            } else if (msg.type === 'exit') {
+              this.handleExit();
+            }
+          } catch (e) {
+            // JSON 파싱 실패 시 일반 텍스트로 처리하거나 무시
           }
-        }, PTY_EXIT_DELAY_MS);
+        });
+      }
+
+      this.bridgeProcess.on('error', (err) => {
+        vscode.window.showErrorMessage(`Terminal Tabs: 브릿지 실행 실패 - ${err.message}`);
+        this.handleExit();
       });
 
+      // 초기 크기 설정
+      this.setDimensions({ columns: cols, rows: rows });
+
+      // 초기 명령어 실행
       setTimeout(() => {
-        if (this.command.trim() && this.ptyProcess) {
-          this.ptyProcess.write(this.command + this.getEOL());
+        if (this.command.trim() && this.bridgeProcess) {
+          this.handleInput(this.command + '\n');
         }
       }, this.commandDelayMs);
+
     } catch (e) {
       this.closeEmitter.fire();
       vscode.window.showErrorMessage(`Terminal Tabs: 쉘 시작 실패 - ${e}`);
     }
   }
 
-  private enqueueWrite(data: string): void {
-    this.writeQueue.push(data);
-    this.queueSize += data.length;
-
-    if (!this.paused && this.queueSize > HIGH_WATER_MARK) {
-      this.paused = true;
-      this.ptyProcess?.pause();
+  private getBridgeBinaryName(): string {
+    const platform = os.platform();
+    const arch = os.arch();
+    
+    let name = `pty-bridge-${platform}-${arch}`;
+    if (platform === 'win32') {
+      name += '.exe';
     }
-
-    this.drainQueue();
-  }
-
-  private drainQueue(): void {
-    if (this.draining) { return; }
-    this.draining = true;
-
-    const step = () => {
-      if (this.disposed || this.writeQueue.length === 0) {
-        this.draining = false;
-        return;
-      }
-
-      const chunk = this.writeQueue.shift()!;
-      this.queueSize -= chunk.length;
-      this.writeEmitter.fire(chunk);
-
-      if (this.paused && this.queueSize <= LOW_WATER_MARK) {
-        this.paused = false;
-        this.ptyProcess?.resume();
-      }
-
-      if (this.writeQueue.length > 0) {
-        setTimeout(step, 0);
-      } else {
-        this.draining = false;
-      }
-    };
-
-    step();
+    return name;
   }
 
   handleInput(data: string): void {
-    this.ptyProcess?.write(data);
+    if (this.bridgeProcess && this.bridgeProcess.stdin) {
+      const msg = JSON.stringify({ type: 'input', data: data });
+      this.bridgeProcess.stdin.write(cmdWithNewline(msg));
+    }
   }
 
   setDimensions(dimensions: vscode.TerminalDimensions): void {
-    if (this.disposed) { return; }
-    this.ptyProcess?.resize(dimensions.columns, dimensions.rows);
+    if (this.bridgeProcess && this.bridgeProcess.stdin) {
+      const msg = JSON.stringify({ 
+        type: 'resize', 
+        cols: dimensions.columns, 
+        rows: dimensions.rows 
+      });
+      this.bridgeProcess.stdin.write(cmdWithNewline(msg));
+    }
+  }
+
+  private handleExit(): void {
+    if (this.disposed) return;
+    setTimeout(() => {
+      if (!this.disposed) {
+        this.closeEmitter.fire();
+      }
+    }, PTY_EXIT_DELAY_MS);
   }
 
   close(): void {
     this.disposed = true;
-    try {
-      this.ptyProcess?.kill();
-    } catch {
-      // 이미 종료된 프로세스 무시
+    if (this.bridgeProcess) {
+      this.bridgeProcess.kill();
     }
-    this.ptyProcess = undefined;
+    this.bridgeProcess = undefined;
     this.writeEmitter.dispose();
     this.closeEmitter.dispose();
   }
+}
 
-  private getDefaultShell(): string {
-    if (IS_WINDOWS) {
-      return process.env.COMSPEC || 'cmd.exe';
-    }
-    return process.env.SHELL || '/bin/bash';
-  }
-
-  private getShellArgs(): string[] {
-    if (IS_WINDOWS) return [];
-    return ['--login'];
-  }
-
-  private getEOL(): string {
-    return IS_WINDOWS ? '\r\n' : '\n';
-  }
+function cmdWithNewline(cmd: string): string {
+  return cmd + '\n';
 }

@@ -57,7 +57,7 @@ export class TerminalManager {
     iconPath: vscode.ThemeIcon | vscode.Uri | undefined,
     viewColumn: vscode.ViewColumn
   ): vscode.Terminal {
-    const ptyInstance = new ShellPseudoterminal(config.command);
+    const ptyInstance = new ShellPseudoterminal(config.command, this.context.extensionPath);
     const terminal = vscode.window.createTerminal({
       name: config.name + MARKER,
       iconPath,
