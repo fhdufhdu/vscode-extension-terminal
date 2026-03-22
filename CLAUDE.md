@@ -5,6 +5,7 @@
 ### 커밋 전 준비
 1. `gh auth switch --user fhdufhdu`로 계정 전환
 2. 모든 커밋에 `--author="fhdufhdu <fhdufhdu@gmail.com>"` 사용
+3. **커밋 메시지는 한글로 작성**
 
 ### 커밋 단위
 - 기능 단위로 커밋 (하나의 커밋에 여러 기능 혼합 금지)
