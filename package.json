@@ -116,7 +116,6 @@
     "install-ext": "bash install.sh"
   },
   "dependencies": {
-    "node-pty": "^1.0.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
