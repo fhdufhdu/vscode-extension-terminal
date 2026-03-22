@@ -1,22 +1,44 @@
 #!/bin/bash
-source ~/.nvm/nvm.sh
-nvm use 20
+set -e
 
+# Node 20 확인 (필요한 경우)
+# source ~/.nvm/nvm.sh && nvm use 20 || true
+
+echo "--- Installing JS Dependencies ---"
 npm install
-# code 심볼릭 링크를 따라가서 VSCode의 package.json 위치를 찾는다
-CODE_REAL=$(readlink "$(which code)" 2>/dev/null || readlink -f "$(which code)")
-CODE_BIN_DIR=$(dirname "$CODE_REAL")
-# macOS: .../app/bin/code → ../package.json
-# Linux: .../code/bin/code → ../resources/app/package.json
-if [ -f "$CODE_BIN_DIR/../package.json" ]; then
-  VSCODE_PKG="$CODE_BIN_DIR/../package.json"
-elif [ -f "$CODE_BIN_DIR/../resources/app/package.json" ]; then
-  VSCODE_PKG="$CODE_BIN_DIR/../resources/app/package.json"
-else
-  echo "Error: VSCode package.json을 찾을 수 없습니다." && exit 1
+
+echo "--- Building Go PTY Bridge ---"
+mkdir -p bin
+cd pty-bridge
+
+# 현재 플랫폼 빌드
+GOOS=$(go env GOOS)
+GOARCH=$(go env GOARCH)
+BINARY_NAME="../bin/pty-bridge-$GOOS-$GOARCH"
+if [ "$GOOS" = "windows" ]; then BINARY_NAME="$BINARY_NAME.exe"; fi
+
+echo "Building for $GOOS/$GOARCH..."
+go build -o "$BINARY_NAME" .
+
+# 전체 플랫폼 빌드 (개발/배포용)
+if [ "$1" = "--all" ]; then
+    echo "Building for all platforms..."
+    GOOS=darwin GOARCH=arm64 go build -o ../bin/pty-bridge-darwin-arm64 .
+    GOOS=darwin GOARCH=amd64 go build -o ../bin/pty-bridge-darwin-x64 .
+    GOOS=linux GOARCH=amd64 go build -o ../bin/pty-bridge-linux-x64 .
+    GOOS=windows GOARCH=amd64 go build -o ../bin/pty-bridge-win32-x64.exe .
 fi
-ELECTRON_VERSION=$(python3 -c "import json; print(json.load(open('$VSCODE_PKG'))['devDependencies']['electron'])")
-npx electron-rebuild --version "$ELECTRON_VERSION" --module-dir . --which-module node-pty
+
+cd ..
+
+echo "--- Building Extension ---"
 npm run build
-npx @vscode/vsce package
-code --install-extension terminal-tabs-0.0.1.vsix --force
+
+echo "--- Packaging Extension ---"
+npx @vscode/vsce package --allow-missing-repository
+
+echo "--- Installing Extension ---"
+VERSION=$(node -p "require('./package.json').version")
+code --install-extension "terminal-tabs-$VERSION.vsix" --force
+
+echo "Success! Please reload VS Code window."
