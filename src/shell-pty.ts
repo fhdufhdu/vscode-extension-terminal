@@ -5,8 +5,7 @@ import { spawn, ChildProcess } from 'child_process';
 import * as readline from 'readline';
 
 const PTY_EXIT_DELAY_MS = 100;
-const HIGH_WATER_MARK = 10 * 1024; // 10KB — 이 이상 쌓이면 stdout 일시정지
-const LOW_WATER_MARK = 1024;       // 1KB — 이 이하로 내려가면 stdout 재개
+const BATCH_INTERVAL_MS = 4; // ~4ms 배칭 윈도우 (프레임 단위 렌더링)
 
 interface BridgeMessage {
   type: 'output' | 'exit';
@@ -19,10 +18,8 @@ export class ShellPseudoterminal implements vscode.Pseudoterminal {
   private writeEmitter = new vscode.EventEmitter<string>();
   private closeEmitter = new vscode.EventEmitter<void>();
   private disposed = false;
-  private writeQueue: string[] = [];
-  private queueSize = 0;
-  private draining = false;
-  private paused = false;
+  private pendingData = '';
+  private batchTimer: ReturnType<typeof setTimeout> | undefined;
 
   onDidWrite = this.writeEmitter.event;
   onDidClose = this.closeEmitter.event;
@@ -92,44 +89,17 @@ export class ShellPseudoterminal implements vscode.Pseudoterminal {
   }
 
   private enqueueWrite(data: string): void {
-    this.writeQueue.push(data);
-    this.queueSize += data.length;
+    this.pendingData += data;
 
-    if (!this.paused && this.queueSize > HIGH_WATER_MARK) {
-      this.paused = true;
-      this.bridgeProcess?.stdout?.pause();
+    if (!this.batchTimer) {
+      this.batchTimer = setTimeout(() => {
+        this.batchTimer = undefined;
+        if (this.pendingData && !this.disposed) {
+          this.writeEmitter.fire(this.pendingData);
+          this.pendingData = '';
+        }
+      }, BATCH_INTERVAL_MS);
     }
-
-    this.drainQueue();
-  }
-
-  private drainQueue(): void {
-    if (this.draining) { return; }
-    this.draining = true;
-
-    const step = () => {
-      if (this.disposed || this.writeQueue.length === 0) {
-        this.draining = false;
-        return;
-      }
-
-      const chunk = this.writeQueue.shift()!;
-      this.queueSize -= chunk.length;
-      this.writeEmitter.fire(chunk);
-
-      if (this.paused && this.queueSize <= LOW_WATER_MARK) {
-        this.paused = false;
-        this.bridgeProcess?.stdout?.resume();
-      }
-
-      if (this.writeQueue.length > 0) {
-        setTimeout(step, 0);
-      } else {
-        this.draining = false;
-      }
-    };
-
-    step();
   }
 
   private getBridgeBinaryName(): string {
