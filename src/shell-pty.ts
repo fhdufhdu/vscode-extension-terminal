@@ -4,9 +4,6 @@ import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import * as readline from 'readline';
 
-const PTY_EXIT_DELAY_MS = 100;
-const BATCH_INTERVAL_MS = 4; // ~4ms 배칭 윈도우 (프레임 단위 렌더링)
-
 interface BridgeMessage {
   type: 'output' | 'exit';
   data?: string;
@@ -15,138 +12,98 @@ interface BridgeMessage {
 
 export class ShellPseudoterminal implements vscode.Pseudoterminal {
   private bridgeProcess: ChildProcess | undefined;
+  private rl: readline.Interface | undefined;
   private writeEmitter = new vscode.EventEmitter<string>();
   private closeEmitter = new vscode.EventEmitter<void>();
   private disposed = false;
-  private pendingData = '';
-  private batchTimer: ReturnType<typeof setTimeout> | undefined;
 
   onDidWrite = this.writeEmitter.event;
   onDidClose = this.closeEmitter.event;
 
-  private commandDelayMs: number;
-
-  constructor(private command: string, private extensionPath: string) {
-    const config = vscode.workspace.getConfiguration('terminalTabs');
-    this.commandDelayMs = config.get<number>('commandDelayMs', 0);
-  }
+  constructor(
+    private command: string,
+    private extensionPath: string,
+    private commandDelayMs: number
+  ) {}
 
   open(initialDimensions: vscode.TerminalDimensions | undefined): void {
     const cols = initialDimensions?.columns ?? 80;
     const rows = initialDimensions?.rows ?? 24;
 
     try {
-      const bridgeBinary = this.getBridgeBinaryName();
-      const bridgePath = path.join(this.extensionPath, 'bin', bridgeBinary);
+      const platform = os.platform();
+      const arch = os.arch();
+      let binaryName = `pty-bridge-${platform}-${arch}`;
+      if (platform === 'win32') binaryName += '.exe';
+      const bridgePath = path.join(this.extensionPath, 'bin', binaryName);
 
-      // Go 브릿지 실행
       this.bridgeProcess = spawn(bridgePath, [], {
         cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir(),
-        env: { ...process.env, COLORTERM: 'truecolor', TERM_PROGRAM: 'vscode' }
+        env: { ...process.env, COLORTERM: 'truecolor', TERM_PROGRAM: 'vscode' },
       });
 
-      // 브릿지로부터의 출력을 처리 (JSON 한 줄 단위)
       if (this.bridgeProcess.stdout) {
-        const rl = readline.createInterface({
+        this.rl = readline.createInterface({
           input: this.bridgeProcess.stdout,
-          terminal: false
+          terminal: false,
         });
 
-        rl.on('line', (line) => {
+        this.rl.on('line', (line) => {
           if (this.disposed) return;
           try {
             const msg: BridgeMessage = JSON.parse(line);
             if (msg.type === 'output' && msg.data) {
-              this.enqueueWrite(msg.data);
+              this.writeEmitter.fire(msg.data);
             } else if (msg.type === 'exit') {
-              this.handleExit();
+              this.closeEmitter.fire();
             }
-          } catch (e) {
-            // JSON 파싱 실패 시 무시
+          } catch {
+            // non-JSON 출력은 브릿지 디버그 로그일 수 있으므로 무시
           }
         });
       }
 
       this.bridgeProcess.on('error', (err) => {
-        vscode.window.showErrorMessage(`Terminal Tabs: 브릿지 실행 실패 - ${err.message}`);
-        this.handleExit();
+        this.writeEmitter.fire(`\r\n[Bridge Error]: ${err.message}\r\n`);
+        this.closeEmitter.fire();
       });
 
-      // 초기 크기 설정
-      this.setDimensions({ columns: cols, rows: rows });
+      this.sendBridgeMessage({ type: 'resize', cols, rows });
 
-      // 초기 명령어 실행
-      setTimeout(() => {
-        if (this.command.trim() && this.bridgeProcess) {
+      if (this.command.trim()) {
+        if (this.commandDelayMs > 0) {
+          setTimeout(() => {
+            this.handleInput(this.command + '\n');
+          }, this.commandDelayMs);
+        } else {
           this.handleInput(this.command + '\n');
         }
-      }, this.commandDelayMs);
-
+      }
     } catch (e) {
       this.closeEmitter.fire();
-      vscode.window.showErrorMessage(`Terminal Tabs: 쉘 시작 실패 - ${e}`);
     }
-  }
-
-  private enqueueWrite(data: string): void {
-    this.pendingData += data;
-
-    if (!this.batchTimer) {
-      this.batchTimer = setTimeout(() => {
-        this.batchTimer = undefined;
-        if (this.pendingData && !this.disposed) {
-          this.writeEmitter.fire(this.pendingData);
-          this.pendingData = '';
-        }
-      }, BATCH_INTERVAL_MS);
-    }
-  }
-
-  private getBridgeBinaryName(): string {
-    const platform = os.platform();
-    const arch = os.arch();
-
-    let name = `pty-bridge-${platform}-${arch}`;
-    if (platform === 'win32') {
-      name += '.exe';
-    }
-    return name;
   }
 
   handleInput(data: string): void {
-    if (this.bridgeProcess && this.bridgeProcess.stdin) {
-      const msg = JSON.stringify({ type: 'input', data: data });
-      this.bridgeProcess.stdin.write(msg + '\n');
-    }
+    this.sendBridgeMessage({ type: 'input', data });
   }
 
   setDimensions(dimensions: vscode.TerminalDimensions): void {
-    if (this.bridgeProcess && this.bridgeProcess.stdin) {
-      const msg = JSON.stringify({
-        type: 'resize',
-        cols: dimensions.columns,
-        rows: dimensions.rows
-      });
-      this.bridgeProcess.stdin.write(msg + '\n');
-    }
-  }
-
-  private handleExit(): void {
-    if (this.disposed) return;
-    setTimeout(() => {
-      if (!this.disposed) {
-        this.closeEmitter.fire();
-      }
-    }, PTY_EXIT_DELAY_MS);
+    this.sendBridgeMessage({ type: 'resize', cols: dimensions.columns, rows: dimensions.rows });
   }
 
   close(): void {
     this.disposed = true;
-    if (this.bridgeProcess) {
-      this.bridgeProcess.kill();
-    }
+    this.rl?.close();
+    this.bridgeProcess?.kill();
     this.bridgeProcess = undefined;
     this.writeEmitter.dispose();
     this.closeEmitter.dispose();
+  }
+
+  private sendBridgeMessage(msg: object): void {
+    if (this.bridgeProcess?.stdin && !this.disposed) {
+      this.bridgeProcess.stdin.write(JSON.stringify(msg) + '\n');
+    }
   }
 }

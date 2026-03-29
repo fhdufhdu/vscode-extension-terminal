@@ -1,11 +1,17 @@
 import * as vscode from 'vscode';
 import { TerminalManager, CommandConfig } from './terminal-manager';
+import { PromptViewProvider } from './prompt-view';
 
 let terminalManager: TerminalManager;
 
 export function activate(context: vscode.ExtensionContext) {
   terminalManager = new TerminalManager(context);
   terminalManager.cleanupEmptyGroups().catch(() => {});
+
+  const promptProvider = new PromptViewProvider(context);
+  promptProvider.onPrompt((text) => {
+    terminalManager.sendToLastActiveTerminal(text);
+  });
 
   const disposable = vscode.commands.registerCommand(
     'terminalTabs.runCommand',
@@ -36,14 +42,10 @@ export function activate(context: vscode.ExtensionContext) {
         placeHolder: '실행할 명령어를 선택하세요',
       });
 
-      if (!selected) {
-        return;
-      }
+      if (!selected) return;
 
       const selectedIndex = items.indexOf(selected);
-      const selectedCommand = commands[selectedIndex];
-
-      await terminalManager.runCommand(selectedCommand);
+      await terminalManager.runCommand(commands[selectedIndex]);
     }
   );
 
@@ -51,9 +53,7 @@ export function activate(context: vscode.ExtensionContext) {
     'terminalTabs.runCommandByName',
     async (args?: { name?: string }) => {
       if (!args?.name) {
-        vscode.window.showErrorMessage(
-          'Terminal Tabs: "name" 인자가 필요합니다.'
-        );
+        vscode.window.showErrorMessage('Terminal Tabs: "name" 인자가 필요합니다.');
         return;
       }
 
@@ -62,48 +62,33 @@ export function activate(context: vscode.ExtensionContext) {
       const found = commands.find((cmd) => cmd.name === args.name);
 
       if (!found) {
-        vscode.window.showErrorMessage(
-          `Terminal Tabs: "${args.name}" 명령어를 찾을 수 없습니다.`
-        );
+        vscode.window.showErrorMessage(`Terminal Tabs: "${args.name}" 명령어를 찾을 수 없습니다.`);
         return;
       }
 
-      // 이미 열린 터미널이 있으면 포커스 이동, 없으면 새로 생성
       if (!terminalManager.focusTerminalByName(found.name)) {
         await terminalManager.runCommand(found);
       }
     }
   );
 
-  const terminalCloseListener = vscode.window.onDidCloseTerminal(
-    (terminal) => {
-      terminalManager.onTerminalClosed(terminal);
+  const terminalCloseListener = vscode.window.onDidCloseTerminal((terminal) => {
+    terminalManager.onTerminalClosed(terminal);
+  });
+
+  const terminalActiveListener = vscode.window.onDidChangeActiveTerminal((terminal) => {
+    if (terminal) {
+      terminalManager.trackActiveTerminal(terminal);
     }
+  });
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('terminalTabs.promptView', promptProvider),
+    disposable,
+    runByName,
+    terminalCloseListener,
+    terminalActiveListener
   );
-
-  context.subscriptions.push(disposable, runByName, terminalCloseListener);
-
-  // terminalTabs 커맨드를 commandsToSkipShell에 자동 등록
-  registerCommandsToSkipShell();
-}
-
-function registerCommandsToSkipShell(): void {
-  const COMMANDS_TO_SKIP = [
-    'terminalTabs.runCommand',
-    'terminalTabs.runCommandByName',
-  ];
-
-  const config = vscode.workspace.getConfiguration('terminal.integrated');
-  const current: string[] = config.get('commandsToSkipShell', []);
-
-  const missing = COMMANDS_TO_SKIP.filter((cmd) => !current.includes(cmd));
-  if (missing.length > 0) {
-    config.update(
-      'commandsToSkipShell',
-      [...current, ...missing],
-      vscode.ConfigurationTarget.Global
-    );
-  }
 }
 
 export function deactivate() {

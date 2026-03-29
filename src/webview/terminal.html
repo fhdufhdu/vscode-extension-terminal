@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none'; script-src {{cspSource}}; style-src 'unsafe-inline';">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: var(--vscode-editor-background, #1e1e1e); }
+    #prompt-bar {
+      display: flex;
+      gap: 4px;
+      height: 100%;
+      align-items: stretch;
+      background: var(--vscode-editor-background, #1e1e1e);
+    }
+    #prompt-input {
+      flex: 1;
+      min-height: 100%;
+      max-height: 100%;
+      padding: 4px 8px;
+      border: 1px solid var(--vscode-input-border, #444);
+      background: var(--vscode-input-background, #2a2a2a);
+      color: var(--vscode-input-foreground, #ccc);
+      font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+      font-size: 13px;
+      resize: none;
+      outline: none;
+    }
+    #prompt-input:focus { border-color: var(--vscode-focusBorder, #007acc); }
+    #send-btn {
+      padding: 4px 12px;
+      background: var(--vscode-button-background, #007acc);
+      color: var(--vscode-button-foreground, #fff);
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    #send-btn:hover { background: var(--vscode-button-hoverBackground, #005a9e); }
+  </style>
+</head>
+<body>
+  <div id="prompt-bar">
+    <textarea id="prompt-input" placeholder="프롬프트 입력 (Enter 전송, Shift+Enter 개행)" rows="4"></textarea>
+    <button id="send-btn">▶</button>
+  </div>
+  <script src="{{webviewJs}}"></script>
+</body>
+</html>

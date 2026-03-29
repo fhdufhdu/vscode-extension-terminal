@@ -2,5 +2,4 @@
 src/**
 tsconfig.json
 esbuild.js
-node_modules/*
-!node_modules/node-pty
+node_modules/**

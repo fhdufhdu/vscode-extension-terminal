@@ -6,8 +6,12 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -33,24 +37,54 @@
       {
         "command": "terminalTabs.runCommandByName",
         "key": "ctrl+shift+1",
-        "args": { "name": "Claude Code" }
+        "args": {
+          "name": "Claude Code"
+        }
       },
       {
         "command": "terminalTabs.runCommandByName",
         "key": "ctrl+shift+2",
-        "args": { "name": "Gemini" }
+        "args": {
+          "name": "Gemini"
+        }
       },
       {
         "command": "terminalTabs.runCommandByName",
         "key": "ctrl+shift+3",
-        "args": { "name": "Codex" }
+        "args": {
+          "name": "Codex"
+        }
       },
       {
         "command": "terminalTabs.runCommandByName",
         "key": "ctrl+shift+4",
-        "args": { "name": "Terminal" }
+        "args": {
+          "name": "Terminal"
+        }
+      },
+      {
+        "command": "terminalTabs.promptView.focus",
+        "key": "ctrl+shift+i"
       }
     ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "terminalTabsPanel",
+          "title": "Terminal Tabs",
+          "icon": "icons/claude.svg"
+        }
+      ]
+    },
+    "views": {
+      "terminalTabsPanel": [
+        {
+          "type": "webview",
+          "id": "terminalTabs.promptView",
+          "name": "Prompt"
+        }
+      ]
+    },
     "configuration": {
       "title": "Terminal Tabs",
       "properties": {
@@ -73,7 +107,10 @@
                 "description": "실행할 터미널 명령어"
               }
             },
-            "required": ["name", "command"],
+            "required": [
+              "name",
+              "command"
+            ],
             "additionalProperties": false
           },
           "default": [
@@ -115,8 +152,7 @@
     "lint": "eslint src",
     "install-ext": "bash install.sh"
   },
-  "dependencies": {
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/vscode": "^1.85.0",
     "@types/node": "^20.0.0",
